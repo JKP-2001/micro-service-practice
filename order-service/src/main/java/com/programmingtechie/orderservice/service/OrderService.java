@@ -1,6 +1,6 @@
 package com.programmingtechie.orderservice.service;
 
-import com.programmingtechie.orderservice.config.WebClientBuilderConfig;
+
 import com.programmingtechie.orderservice.dto.InventoryResponse;
 import com.programmingtechie.orderservice.dto.OrderLineItemsDto;
 import com.programmingtechie.orderservice.dto.OrderRequest;
@@ -8,11 +8,10 @@ import com.programmingtechie.orderservice.model.Order;
 import com.programmingtechie.orderservice.model.OrderLineItems;
 import com.programmingtechie.orderservice.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
-
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -24,6 +23,7 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final WebClient.Builder webClientBuilder;
+    private final KafkaTemplate<String, String> kafkaTemplate;
 
 
     public String placeOrder(OrderRequest orderRequest) {
@@ -37,7 +37,7 @@ public class OrderService {
 
         order.setOrderLineItemsList(orderLineItems);
 
-        List<String> skuCodes = orderLineItems.stream().map(item -> item.getSkuCode()).toList();
+        List<String> skuCodes = orderLineItems.stream().map(OrderLineItems::getSkuCode).toList();
 
         InventoryResponse[] inventoryResponses = webClientBuilder
                 .build()
@@ -48,11 +48,12 @@ public class OrderService {
                                 .bodyToMono(InventoryResponse[].class)
                                         .block();
 
-        boolean allProductInStock = Arrays.stream(inventoryResponses != null ? inventoryResponses : null)
+        boolean allProductInStock = Arrays.stream(inventoryResponses)
                 .allMatch(InventoryResponse::isInStock);
 
         if(allProductInStock){
             orderRepository.save(order);
+            kafkaTemplate.send("notificationTopic",order.getOrderNumber());
             return "Order placed successfully";
         } else {
             throw new IllegalArgumentException("Product is not in stock, please try again later");
